@@ -8,3 +8,4 @@ Dockerfile
 # Folders
 clickhouse_server/*
 build/*
+frontend/node_modules
