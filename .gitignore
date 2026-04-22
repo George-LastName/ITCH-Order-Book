@@ -6,5 +6,7 @@ setup.sh
 Dockerfile
 
 # Folders
-clickhouse_server/*
-build/*
+clickhouse_server/
+build/
+frontend/node_modules/
+frontend/dist/
