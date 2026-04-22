@@ -30,8 +30,30 @@ case $1 in
         build
         run
         ;;
-    *)
-        echo -e "First Arg Options:\nc - clean\nb - build\nr - run\nall - clean, build, run"
+    "reset")
+        clean
+        clickhouse-client --query "DROP DATABASE Market_Data"
         ;;
+    "start")
+        konsole -e /bin/bash --rcfile <(echo "cd clickhouse_server; clickhouse-server; exit") &
+        systemctl start grafana
+        echo "Started."
+        ;;
+    "stop")
+        clickhouse-client --query "SYSTEM SHUTDOWN"
+        systemctl stop grafana
+        echo "Stopped."
+        ;;
+    *)
+        echo "Usage: ./r.sh <command>"
+        echo ""
+        echo "  start Start ClickHouse & Grafana."
+        echo "  stop  Stop ClickHouse & Grafana."
+        echo "  c     Clean the Build Folder"
+        echo "  b     Build"
+        echo "  r     Run"
+        echo "  reset Clean Build & Delete Clickhouse Database."
+        echo "  all   Clean, Build, Run"
+        ;;
+
 esac
-exit
