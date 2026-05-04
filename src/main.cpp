@@ -18,6 +18,10 @@
 // Clickhouse
 #include <clickhouse/client.h>
 
+#ifdef PROF
+#include <chrono>
+#endif
+
 #define HEADER_LENGTH 11
 static constexpr size_t TOP_N = 10;
 
@@ -181,7 +185,10 @@ static inline void parse_message(uint8_t* ptr){
 }
 
 int main(int argc, char* argv[]){
-
+#ifdef PROF
+    std::cout << "PROFILING!\n";
+    auto start = std::chrono::high_resolution_clock::now();
+#endif
     // Check file path has been provided
     if (argc != 2) {
         std::cout << "Second argument must be file path/filename." << std::endl;
@@ -315,6 +322,10 @@ int main(int argc, char* argv[]){
     if(munmap(mapped_file, file_size) == -1){
         std::cout << "Failed to munmap." << std::endl;
     }
-
+#ifdef PROF
+    auto stop = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(stop-start);
+    std::cout << "TIME: " << duration.count() << "\n";
+#endif
     return 0;
 }

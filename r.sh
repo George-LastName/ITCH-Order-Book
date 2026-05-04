@@ -7,7 +7,12 @@ clean() {
 }
 
 build() {
-    cmake -S . -B build
+    cmake -S . -B build -DPROFILING=OFF
+    cmake --build build -j32
+}
+
+profile() {
+    cmake -S . -B build -DPROFILING=ON
     cmake --build build -j32
 }
 
@@ -21,6 +26,9 @@ case $1 in
         ;;
     "b")
         build
+        ;;
+    "p")
+        profile
         ;;
     "r")
         run
@@ -51,6 +59,7 @@ case $1 in
         echo "  stop  Stop ClickHouse & Grafana."
         echo "  c     Clean the Build Folder"
         echo "  b     Build"
+        echo "  p    Build with Profiling"
         echo "  r     Run"
         echo "  reset Clean Build & Delete Clickhouse Database."
         echo "  all   Clean, Build, Run"
