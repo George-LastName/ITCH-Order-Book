@@ -2,18 +2,18 @@
 #include <cstdlib>
 #include <unistd.h> // close
 #include <fcntl.h> // O_RDONLY
-
 #include <iostream> // cout et. all
 #include <string>
-
 #include <sys/mman.h> // PROT_READ et. all & munmap
 #include <sys/stat.h> // fstat
-
 #include <unordered_map>
+#include <memory> // unique_ptr
+
 
 #include "MessageTypes.h" // Messages
 #include "OrderBook.h"
 #include "clickhouse/ClickhouseOrderBook.h"
+#include "database.h"
 
 // Clickhouse
 #include <clickhouse/client.h>
@@ -225,6 +225,8 @@ int main(int argc, char* argv[]){
     std::string database_name = "Market_Data";
     std::string table_name = sanitise_table_name(filepath);
 
+    std::unique_ptr<Database> data_connection = Database::Create(eDatabaseTypes::kClickhouse);
+    data_connection->Disconnect();
     {
         clickhouse::Client client{clickhouse::ClientOptions().SetHost("localhost")};
         client.Execute(
@@ -291,13 +293,13 @@ int main(int argc, char* argv[]){
 
             // Flush changed price levels every second
             if (ts - last_delta_ns >= DELTA_INTERVAL_NS) {
-                flush_deltas(client, delta_table, ts, stock_books);
+                // flush_deltas(client, delta_table, ts, stock_books);
                 last_delta_ns = ts;
             }
 
             // Write full book snapshots every 60 seconds as a recovery baseline
             if (ts - last_snapshot_ns >= SNAPSHOT_INTERVAL_NS) {
-                snapshot_all_books(client, snapshot_table, ts, stock_books, TOP_N);
+                // snapshot_all_books(client, snapshot_table, ts, stock_books, TOP_N);
                 last_snapshot_ns = ts;
             }
 
@@ -305,17 +307,17 @@ int main(int argc, char* argv[]){
         }
 
         // Final flush of any remaining buffered data
-        flush_deltas(client, delta_table, ts, stock_books, true);
-        snapshot_all_books(client, snapshot_table, ts, stock_books, TOP_N, true);
+        // flush_deltas(client, delta_table, ts, stock_books, true);
+        // snapshot_all_books(client, snapshot_table, ts, stock_books, TOP_N, true);
 
     } // client destroyed here — sends proper TCP disconnect before munmap/return
-
+    data_connection->Disconnect();
     std::cout << "\n";
-    long sum = 0;
-    for (int i = 0; i < 256; i++){
-        if (counts[i] != 0) std::cout << static_cast<char>(i) << ": " << counts[i] << "\n";
-        sum += counts[i];
-    }
+    // long sum = 0;
+    // for (int i = 0; i < 256; i++){
+    //     if (counts[i] != 0) std::cout << static_cast<char>(i) << ": " << counts[i] << "\n";
+    //     sum += counts[i];
+    // }
 
     std::cout << "\n";
 

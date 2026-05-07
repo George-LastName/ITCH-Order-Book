@@ -12,6 +12,7 @@ option(PROFILING OFF)
 add_executable(${PROJECT_NAME}
     src/main.cpp
     src/OrderBook.cpp
+    src/database.cpp
     src/clickhouse/ClickhouseOrderBook.cpp
     )
 
