@@ -222,112 +222,59 @@ int main(int argc, char* argv[]){
     }
     close(rdonly_file);
 
-    std::string database_name = "Market_Data";
+    std::string database_name = "Market_Data_2";
     std::string table_name = sanitise_table_name(filepath);
 
     std::unique_ptr<Database> data_connection = Database::Create(eDatabaseTypes::kClickhouse);
-    data_connection->Disconnect();
-    {
-        clickhouse::Client client{clickhouse::ClientOptions().SetHost("localhost")};
-        client.Execute(
-            "CREATE DATABASE IF NOT EXISTS " + database_name
-        );
 
-        // Full book snapshots — taken every 60 s as a recovery baseline.
-        // ReplacingMergeTree deduplicates on (stock_id, timestamp_ns) so re-runs
-        // of the same file are idempotent.
-        client.Execute(R"(
-            CREATE TABLE IF NOT EXISTS )" + database_name + "." + table_name + R"(_snapshots
-                (
-                    stock_id        UInt16,
-                    stock_name      LowCardinality(String),
-                    timestamp_ns    UInt64,
-                    bid_prices      Array(UInt32),
-                    bid_shares      Array(UInt32),
-                    ask_prices      Array(UInt32),
-                    ask_shares      Array(UInt32)
-                )
-                ENGINE = ReplacingMergeTree()
-                ORDER BY (stock_id, timestamp_ns)
-                SETTINGS index_granularity = 8192
-        )");
+    data_connection->CreateDatabase(database_name);
+    data_connection->CreateTables(table_name);
 
-        // Per-price-level deltas — one row per changed level per second.
-        // shares = 0 means the level was removed.
-        // MergeTree (no dedup) because each delta is a distinct event.
-        client.Execute(R"(
-            CREATE TABLE IF NOT EXISTS )" + database_name + "." + table_name + R"(_deltas
-                (
-                    timestamp_ns    UInt64,
-                    stock_id        UInt16,
-                    stock_name      LowCardinality(String),
-                    side            LowCardinality(String),
-                    price           UInt32,
-                    shares          UInt32
-                )
-                ENGINE = MergeTree()
-                ORDER BY (stock_id, timestamp_ns, side, price)
-                SETTINGS index_granularity = 8192
-        )");
+    std::uint8_t* filePtr = mapped_file;
+    const std::uint8_t* file_end = mapped_file + file_size;
 
-        std::uint8_t* filePtr = mapped_file;
-        const std::uint8_t* file_end = mapped_file + file_size;
-        const std::string snapshot_table = database_name + "." + table_name + "_snapshots";
-        const std::string delta_table    = database_name + "." + table_name + "_deltas";
+    static constexpr uint64_t DELTA_INTERVAL_NS    =  1'000'000'000ULL; //  1 second
+    static constexpr uint64_t SNAPSHOT_INTERVAL_NS = 60'000'000'000ULL; // 60 seconds
 
-        static constexpr uint64_t DELTA_INTERVAL_NS    =  1'000'000'000ULL; //  1 second
-        static constexpr uint64_t SNAPSHOT_INTERVAL_NS = 60'000'000'000ULL; // 60 seconds
+    uint64_t last_delta_ns    = 0;
+    uint64_t last_snapshot_ns = 0;
+    uint64_t curr_message_timestamp = 0;
 
-        uint64_t last_delta_ns    = 0;
-        uint64_t last_snapshot_ns = 0;
-        uint64_t ts = 0;
+    while (filePtr < file_end) {
+        const uint16_t message_length = ntohs(*reinterpret_cast<const uint16_t*>(filePtr));
+        filePtr += 2;
 
-        // Loop through file
-        while (filePtr < file_end) {
-            const uint16_t message_l = ntohs(*reinterpret_cast<const uint16_t*>(filePtr));
-            filePtr += 2;
+        curr_message_timestamp = reinterpret_cast<const ITCH_Header*>(filePtr)->get_timestamp();
+        parse_message(filePtr);
 
-            ts = reinterpret_cast<const ITCH_Header*>(filePtr)->get_timestamp();
-
-            parse_message(filePtr);
-
-            // Flush changed price levels every second
-            if (ts - last_delta_ns >= DELTA_INTERVAL_NS) {
-                // flush_deltas(client, delta_table, ts, stock_books);
-                last_delta_ns = ts;
-            }
-
-            // Write full book snapshots every 60 seconds as a recovery baseline
-            if (ts - last_snapshot_ns >= SNAPSHOT_INTERVAL_NS) {
-                // snapshot_all_books(client, snapshot_table, ts, stock_books, TOP_N);
-                last_snapshot_ns = ts;
-            }
-
-            filePtr += message_l;
+        if (curr_message_timestamp - last_delta_ns >= DELTA_INTERVAL_NS) {
+            data_connection->WriteDelta(stock_books, curr_message_timestamp);
+            last_delta_ns = curr_message_timestamp;
         }
 
-        // Final flush of any remaining buffered data
-        // flush_deltas(client, delta_table, ts, stock_books, true);
-        // snapshot_all_books(client, snapshot_table, ts, stock_books, TOP_N, true);
+        if (curr_message_timestamp - last_snapshot_ns >= SNAPSHOT_INTERVAL_NS) {
+            data_connection->WriteSnapshot(stock_books, TOP_N, curr_message_timestamp);
+            last_snapshot_ns = curr_message_timestamp;
+        }
 
-    } // client destroyed here — sends proper TCP disconnect before munmap/return
-    data_connection->Disconnect();
-    std::cout << "\n";
-    // long sum = 0;
-    // for (int i = 0; i < 256; i++){
-    //     if (counts[i] != 0) std::cout << static_cast<char>(i) << ": " << counts[i] << "\n";
-    //     sum += counts[i];
-    // }
+        filePtr += message_length;
+    }
+
+    // Force final write
+    data_connection->WriteDelta(stock_books, curr_message_timestamp, eDBWriting::kOverrideLimit);
+    data_connection->WriteSnapshot(stock_books, TOP_N, curr_message_timestamp, eDBWriting::kOverrideLimit);
 
     std::cout << "\n";
 
     if(munmap(mapped_file, file_size) == -1){
         std::cout << "Failed to munmap." << std::endl;
     }
+
 #ifdef PROF
     auto stop = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(stop-start);
     std::cout << "TIME: " << duration.count() << "\n";
 #endif
+
     return 0;
 }
