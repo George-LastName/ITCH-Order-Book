@@ -13,6 +13,7 @@ add_executable(${PROJECT_NAME}
     src/main.cpp
     src/order_book.cpp
     src/database.cpp
+    src/concrete_databases/clickhouse_database.cpp
     )
 
 add_subdirectory(contribs/clickhouse-cpp)
@@ -31,6 +32,8 @@ if (PROFILING)
 endif()
 
 target_include_directories(${PROJECT_NAME}
+    PRIVATE
+    src
     SYSTEM PRIVATE
     contribs/clickhouse-cpp
     contribs/clickhouse-cpp/contrib/absl
