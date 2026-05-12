@@ -1,5 +1,5 @@
 #include "database.h"
-#include "OrderBook.h"
+#include "order_book.h"
 
 #include <cstdlib>
 #include <cstdint>
@@ -38,9 +38,9 @@ std::string Database::SanitiseTableName(const std::string &path) {
     return name;
 }
 
-std::unique_ptr<Database> Database::Create(eDatabaseTypes type){
+std::unique_ptr<Database> Database::Create(DatabaseType type){
     switch (type){
-        case eDatabaseTypes::kClickhouse : {
+        case DatabaseType::kClickhouse : {
             return std::make_unique<ClickhouseDatabase>();
         }
         default : {
@@ -107,10 +107,10 @@ void ClickhouseDatabase::CreateTables(std::string table_name){
     return;
 }
 
-void ClickhouseDatabase::WriteSnapshot(std::unordered_map<uint16_t, Order_Book>& books,
+void ClickhouseDatabase::WriteSnapshot(std::unordered_map<uint16_t, OrderBook>& books,
                                        size_t book_depth,
                                        uint64_t timestamp_ns,
-                                       eDBWriting writing_mode){
+                                       DbWriting writing_mode){
 
     static auto col_stock_id   = std::make_shared<clickhouse::ColumnUInt16>();
     static auto col_stock_name = std::make_shared<clickhouse::ColumnLowCardinalityT<clickhouse::ColumnString>>();
@@ -121,7 +121,7 @@ void ClickhouseDatabase::WriteSnapshot(std::unordered_map<uint16_t, Order_Book>&
     static auto col_ask_shares = std::make_shared<clickhouse::ColumnArrayT<clickhouse::ColumnUInt32>>();
     static int buffered_snapshots = 0;
 
-    static constexpr int FLUSH_EVERY = 10; // flush every 10 snapshots (~10 min of data)
+    static constexpr int kFlushEvery = 10; // flush every 10 snapshots (~10 min of data)
 
     for (const auto& [stock_id, book] : books) {
         if (!book.IsInitialised()) continue;
@@ -137,7 +137,7 @@ void ClickhouseDatabase::WriteSnapshot(std::unordered_map<uint16_t, Order_Book>&
     }
 
     buffered_snapshots++;
-    if (writing_mode == eDBWriting::kFollowLimit && buffered_snapshots < FLUSH_EVERY) return;
+    if (writing_mode == DbWriting::kFollowLimit && buffered_snapshots < kFlushEvery) return;
     if (col_stock_id->Size() == 0) return;
 
     clickhouse::Block block;
@@ -164,9 +164,9 @@ void ClickhouseDatabase::WriteSnapshot(std::unordered_map<uint16_t, Order_Book>&
     buffered_snapshots = 0;
 };
 
-void ClickhouseDatabase::WriteDelta(std::unordered_map<uint16_t, Order_Book>& books,
+void ClickhouseDatabase::WriteDelta(std::unordered_map<uint16_t, OrderBook>& books,
                                     uint64_t timestamp_ns,
-                                    eDBWriting writing_mode){
+                                    DbWriting writing_mode){
     static auto col_timestamp  = std::make_shared<clickhouse::ColumnUInt64>();
     static auto col_stock_id   = std::make_shared<clickhouse::ColumnUInt16>();
     static auto col_stock_name = std::make_shared<clickhouse::ColumnLowCardinalityT<clickhouse::ColumnString>>();
@@ -175,7 +175,7 @@ void ClickhouseDatabase::WriteDelta(std::unordered_map<uint16_t, Order_Book>& bo
     static auto col_shares     = std::make_shared<clickhouse::ColumnUInt32>();
     static int buffered_rounds = 0;
 
-    static constexpr int FLUSH_EVERY = 100; // flush every 100 delta rounds (~100s of data)
+    static constexpr int kFlushEvery = 100; // flush every 100 delta rounds (~100s of data)
 
     for (auto& [stock_id, book] : books) {
         if (!book.IsInitialised() || !book.HasDeltas()) continue;
@@ -203,7 +203,7 @@ void ClickhouseDatabase::WriteDelta(std::unordered_map<uint16_t, Order_Book>& bo
     }
 
     buffered_rounds++;
-    if (writing_mode == eDBWriting::kFollowLimit && buffered_rounds < FLUSH_EVERY) return;
+    if (writing_mode == DbWriting::kFollowLimit && buffered_rounds < kFlushEvery) return;
     if (col_timestamp->Size() == 0) return;
 
     clickhouse::Block block;

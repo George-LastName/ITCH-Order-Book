@@ -10,9 +10,8 @@
 #include <memory> // unique_ptr
 
 
-#include "MessageTypes.h" // Messages
-#include "OrderBook.h"
-#include "clickhouse/ClickhouseOrderBook.h"
+#include "message_types.h" // Messages
+#include "order_book.h"
 #include "database.h"
 
 // Clickhouse
@@ -23,21 +22,21 @@
 #endif
 
 #define HEADER_LENGTH 11
-static constexpr size_t TOP_N = 10;
+static constexpr size_t kTopN = 10;
 
-enum class Market_State {
-    START_DAY,
-    START_SYSTEM,
-    START_MARKET,
-    END_MARKET,
-    END_SYSTEM,
-    END_DAY
+enum class MarketState {
+    kStartDay,
+    kStartSystem,
+    kStartMarket,
+    kEndMarket,
+    kEndSystem,
+    kEndDay
 };
 
 int counts[256] = {0};
-std::unordered_map<uint16_t, Order_Book> stock_books;
+std::unordered_map<uint16_t, OrderBook> stock_books;
 
-static std::string sanitise_table_name(const std::string& path) {
+static std::string SanitiseTableName(const std::string& path) {
     // Strip directory prefix — take only the filename
     const size_t slash = path.rfind('/');
     std::string name = (slash == std::string::npos) ? path : path.substr(slash + 1);
@@ -59,9 +58,9 @@ static std::string sanitise_table_name(const std::string& path) {
 
 
 
-static inline void parse_message(uint8_t* ptr){
+static inline void ParseMessage(uint8_t* ptr){
 
-    const auto* Header = reinterpret_cast<ITCH_Header*>(ptr);
+    const auto* header = reinterpret_cast<ItchHeader*>(ptr);
     ptr += HEADER_LENGTH;
 
     /* TODO: For SIMULATION, check if able to send message, if not wait until able.
@@ -70,111 +69,111 @@ static inline void parse_message(uint8_t* ptr){
      *  }
      */
 
-    counts[Header->type]++;
-    auto& stock = stock_books[Header->get_locate()];
+    counts[header->type]++;
+    auto& stock = stock_books[header->GetLocate()];
 
-    switch (Header->type) {
+    switch (header->type) {
         // [[X]] helps complier order the jump table for better efficiency.
         [[unlikely]] case 'S': {
-            auto* Mess = reinterpret_cast<const Sys_Event*>(ptr);
-            std::cout << Header->get_time_from_mid() << ": " << Mess->event_code << "\n";
+            auto* mess = reinterpret_cast<const SysEvent*>(ptr);
+            std::cout << header->GetTimeFromMid() << ": " << mess->event_code << "\n";
             break;
         }
         case 'R': {
-            auto* Mess = reinterpret_cast<const Stock_Dir*>(ptr);
-            stock = Order_Book(std::string_view(Mess->stock, 8));
+            auto* mess = reinterpret_cast<const StockDir*>(ptr);
+            stock = OrderBook(std::string_view(mess->stock, 8));
             break;
         }
         case 'H': {
-            auto* Mess = reinterpret_cast<Stock_Trading_Action*>(ptr);
-            stock.Set_State(Mess->trading_state);
+            auto* mess = reinterpret_cast<StockTradingAction*>(ptr);
+            stock.SetState(mess->trading_state);
             break;
         }
         case 'Y': {
-            // auto* Mess = reinterpret_cast<Reg_Sho_Restriction*>(ptr);
+            // auto* mess = reinterpret_cast<RegShoRestriction*>(ptr);
             break;
         }
         case 'L': {
-            // auto* Mess = reinterpret_cast<Market_Participant_Position*>(ptr);
+            // auto* mess = reinterpret_cast<MarketParticipantPosition*>(ptr);
             break;
         }
         [[unlikely]] case 'V': {
-            // auto* Mess = reinterpret_cast<MWCB_Decline_Level*>(ptr);
+            // auto* mess = reinterpret_cast<MwcbDeclineLevel*>(ptr);
             break;
         }
         [[unlikely]] case 'W': {
-            // auto* Mess = reinterpret_cast<MWCB_Status*>(ptr);
+            // auto* mess = reinterpret_cast<MwcbStatus*>(ptr);
                 break;
         }
         [[unlikely]] case 'K': {
-            // auto* Mess = reinterpret_cast<Quoting_Period_Update*>(ptr);
+            // auto* mess = reinterpret_cast<QuotingPeriodUpdate*>(ptr);
             break;
         }
         [[unlikely]] case 'J': {
-            // auto* Mess = reinterpret_cast<LULD_Auction_Collar*>(ptr);
+            // auto* mess = reinterpret_cast<LuldAuctionCollar*>(ptr);
             break;
         }
         [[unlikely]] case 'h': {
-            // auto* Mess = reinterpret_cast<Operational_Halt*>(ptr);
+            // auto* mess = reinterpret_cast<OperationalHalt*>(ptr);
             break;
         }
         [[likely]] case 'A': {
-            auto* Mess = reinterpret_cast<Add_Order_No_MPID*>(ptr);
-            stock.Add(Mess);
+            auto* mess = reinterpret_cast<AddOrderNoMpid*>(ptr);
+            stock.Add(mess);
             break;
         }
         case 'F': {
-            auto* Mess = reinterpret_cast<Add_Order_MPID*>(ptr);
-            stock.Add(Mess);
+            auto* mess = reinterpret_cast<AddOrderMpid*>(ptr);
+            stock.Add(mess);
             break;
         }
         case 'E': {
-            auto* Mess =  reinterpret_cast<Order_Executed*>(ptr);
-            stock.Execute(Mess);
+            auto* mess =  reinterpret_cast<OrderExecuted*>(ptr);
+            stock.Execute(mess);
             break;
         }
         case 'C': {
-            auto* Mess = reinterpret_cast<Order_Executed_With_Price*>(ptr);
-            stock.Execute(Mess);
+            auto* mess = reinterpret_cast<OrderExecutedWithPrice*>(ptr);
+            stock.Execute(mess);
             break;
         }
         case 'X': {
-            auto* Mess = reinterpret_cast<Order_Cancel*>(ptr);
-            stock.Cancel(Mess);
+            auto* mess = reinterpret_cast<OrderCancel*>(ptr);
+            stock.Cancel(mess);
             break;
         }
         [[likely]] case 'D': {
-            auto* Mess = reinterpret_cast<Order_Delete*>(ptr);
-            stock.Delete(Mess);
+            auto* mess = reinterpret_cast<OrderDelete*>(ptr);
+            stock.Delete(mess);
             break;
         }
         [[likely]] case 'U': {
-            auto* Mess = reinterpret_cast<Order_Replace*>(ptr);
-            stock.Replace(Mess);
+            auto* mess = reinterpret_cast<OrderReplace*>(ptr);
+            stock.Replace(mess);
             break;
         }
         case 'P': {
-            // auto* Mess = reinterpret_cast<Trade_Non_Cross*>(ptr);
+            // auto* mess = reinterpret_cast<TradeNonCross*>(ptr);
             break;
         }
         case 'Q': {
-            // auto* Mess = reinterpret_cast<Cross_Trade*>(ptr);
+            // auto* mess = reinterpret_cast<CrossTrade*>(ptr);
             break;
         }
         [[unlikely]] case 'B': {
-            // auto* Mess = reinterpret_cast<Broken_Trade*>(ptr);
+            // auto* mess = reinterpret_cast<BrokenTrade*>(ptr);
             break;
         }
         case 'I': {
-            // auto* Mess = reinterpret_cast<NOII*>(ptr);
+            // auto* mess = reinterpret_cast<Noii*>(ptr);
             break;
         }
         [[unlikely]] case 'N': {
-            // auto* Mess = reinterpret_cast<RPII*>(ptr);
+            // auto* mess = reinterpret_cast<Rpii*>(ptr);
             break;
         }
         [[unlikely]] case 'O': {
-            // auto* Mess = reinterpret_cast<DLCR_Price_Discovery*>(ptr);
+            // auto* mess = reinterpret_cast<DlcrPriceDiscovery*>(ptr);
             break;
         }
         default:{
@@ -223,9 +222,9 @@ int main(int argc, char* argv[]){
     close(rdonly_file);
 
     std::string database_name = "Market_Data_2";
-    std::string table_name = sanitise_table_name(filepath);
+    std::string table_name = SanitiseTableName(filepath);
 
-    std::unique_ptr<Database> data_connection = Database::Create(eDatabaseTypes::kClickhouse);
+    std::unique_ptr<Database> data_connection = Database::Create(DatabaseType::kClickhouse);
 
     data_connection->CreateDatabase(database_name);
     data_connection->CreateTables(table_name);
@@ -233,8 +232,8 @@ int main(int argc, char* argv[]){
     std::uint8_t* filePtr = mapped_file;
     const std::uint8_t* file_end = mapped_file + file_size;
 
-    static constexpr uint64_t DELTA_INTERVAL_NS    =  1'000'000'000ULL; //  1 second
-    static constexpr uint64_t SNAPSHOT_INTERVAL_NS = 60'000'000'000ULL; // 60 seconds
+    static constexpr uint64_t kDeltaIntervalNs    =  1'000'000'000ULL; //  1 second
+    static constexpr uint64_t kSnapshotIntervalNs = 60'000'000'000ULL; // 60 seconds
 
     uint64_t last_delta_ns    = 0;
     uint64_t last_snapshot_ns = 0;
@@ -244,16 +243,16 @@ int main(int argc, char* argv[]){
         const uint16_t message_length = ntohs(*reinterpret_cast<const uint16_t*>(filePtr));
         filePtr += 2;
 
-        curr_message_timestamp = reinterpret_cast<const ITCH_Header*>(filePtr)->get_timestamp();
-        parse_message(filePtr);
+        curr_message_timestamp = reinterpret_cast<const ItchHeader*>(filePtr)->GetTimestamp();
+        ParseMessage(filePtr);
 
-        if (curr_message_timestamp - last_delta_ns >= DELTA_INTERVAL_NS) {
+        if (curr_message_timestamp - last_delta_ns >= kDeltaIntervalNs) {
             data_connection->WriteDelta(stock_books, curr_message_timestamp);
             last_delta_ns = curr_message_timestamp;
         }
 
-        if (curr_message_timestamp - last_snapshot_ns >= SNAPSHOT_INTERVAL_NS) {
-            data_connection->WriteSnapshot(stock_books, TOP_N, curr_message_timestamp);
+        if (curr_message_timestamp - last_snapshot_ns >= kSnapshotIntervalNs) {
+            data_connection->WriteSnapshot(stock_books, kTopN, curr_message_timestamp);
             last_snapshot_ns = curr_message_timestamp;
         }
 
@@ -261,8 +260,8 @@ int main(int argc, char* argv[]){
     }
 
     // Force final write
-    data_connection->WriteDelta(stock_books, curr_message_timestamp, eDBWriting::kOverrideLimit);
-    data_connection->WriteSnapshot(stock_books, TOP_N, curr_message_timestamp, eDBWriting::kOverrideLimit);
+    data_connection->WriteDelta(stock_books, curr_message_timestamp, DbWriting::kOverrideLimit);
+    data_connection->WriteSnapshot(stock_books, kTopN, curr_message_timestamp, DbWriting::kOverrideLimit);
 
     std::cout << "\n";
 

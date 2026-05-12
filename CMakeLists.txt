@@ -11,7 +11,7 @@ option(PROFILING OFF)
 
 add_executable(${PROJECT_NAME}
     src/main.cpp
-    src/OrderBook.cpp
+    src/order_book.cpp
     src/database.cpp
     )
 

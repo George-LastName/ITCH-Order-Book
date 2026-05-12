@@ -3,31 +3,31 @@
 #include <iostream>
 #include <string>
 
-#include "OrderBook.h"
-#include "MessageTypes.h"
+#include "order_book.h"
+#include "message_types.h"
 
-Order_Book::Order_Book(std::string_view stock){
-    state = Trading_State::Halt;
-    stock_name = stock;
+OrderBook::OrderBook(std::string_view stock){
+    state_ = TradingState::kHalt;
+    stock_name_ = stock;
 }
 
 // Capture the post-mutation total at a price level into the delta map.
 // If the level no longer exists in the book, records 0 (level removed).
-void Order_Book::record_delta(char side_indicator, std::uint32_t price) {
-    const auto& side = (side_indicator == 'B') ? bids : asks;
-    auto&     deltas = (side_indicator == 'B') ? bid_deltas : ask_deltas;
+void OrderBook::RecordDelta(char side_indicator, std::uint32_t price) {
+    const auto& side = (side_indicator == 'B') ? bids_ : asks_;
+    auto&     deltas = (side_indicator == 'B') ? bid_deltas_ : ask_deltas_;
     const auto it = side.find(price);
     deltas[price] = (it != side.end()) ? it->second : 0;
 }
 
-void Order_Book::Set_State(char new_state){
+void OrderBook::SetState(char new_state){
     switch (new_state){
-        case 'H': { state = Trading_State::Halt;      break; }
-        case 'P': { state = Trading_State::Paused;    break; }
-        case 'Q': { state = Trading_State::Quotation; break; }
-        case 'T': { state = Trading_State::Trading;   break; }
+        case 'H': { state_ = TradingState::kHalt;      break; }
+        case 'P': { state_ = TradingState::kPaused;    break; }
+        case 'Q': { state_ = TradingState::kQuotation; break; }
+        case 'T': { state_ = TradingState::kTrading;   break; }
         default:{
-            std::cout << "Unknown Trading State for " << stock_name << " of " << new_state << "\n";
+            std::cout << "Unknown Trading State for " << stock_name_ << " of " << new_state << "\n";
             exit(0);
         }
     }
@@ -35,44 +35,44 @@ void Order_Book::Set_State(char new_state){
 }
 
 template<typename T>
-void Order_Book::Add(const T* order){
+void OrderBook::Add(const T* order){
     Order new_order;
 
-    if constexpr (std::is_same_v<T, Add_Order_MPID>) {
-        new_order.MPID = std::string(order->attribution, 4);
+    if constexpr (std::is_same_v<T, AddOrderMpid>) {
+        new_order.mpid = std::string(order->attribution, 4);
     }
     new_order.indicator = order->buy_sell_indicator;
     new_order.shares    = ntohl(order->shares);
     new_order.price     = ntohl(order->price);
 
-    orders.insert({order->order_reference_number, new_order});
+    orders_.insert({order->order_reference_number, new_order});
 
     if(new_order.indicator != 'B' && new_order.indicator != 'S'){
-        std::cout << "Invalid Side for " << stock_name << " : |" << new_order.indicator << "|\n";
+        std::cout << "Invalid Side for " << stock_name_ << " : |" << new_order.indicator << "|\n";
         exit(0);
     }
 
-    auto& side = (new_order.indicator == 'B') ? bids : asks;
+    auto& side = (new_order.indicator == 'B') ? bids_ : asks_;
     side[new_order.price] += new_order.shares;
-    record_delta(new_order.indicator, new_order.price);
+    RecordDelta(new_order.indicator, new_order.price);
 }
 
-template void Order_Book::Add(const Add_Order_MPID* order);
-template void Order_Book::Add(const Add_Order_No_MPID* order);
+template void OrderBook::Add(const AddOrderMpid* order);
+template void OrderBook::Add(const AddOrderNoMpid* order);
 
-BookSnapshot Order_Book::GetSnapshot(size_t top_n) const {
+BookSnapshot OrderBook::GetSnapshot(size_t top_n) const {
     BookSnapshot snap;
 
     // Top N bids: highest prices first (reverse-iterate the ascending map)
     size_t count = 0;
-    for (auto it = bids.rbegin(); it != bids.rend() && count < top_n; ++it, ++count) {
+    for (auto it = bids_.rbegin(); it != bids_.rend() && count < top_n; ++it, ++count) {
         snap.bid_prices.push_back(it->first);
         snap.bid_shares.push_back(it->second);
     }
 
     // Top N asks: lowest prices first (forward-iterate)
     count = 0;
-    for (auto it = asks.begin(); it != asks.end() && count < top_n; ++it, ++count) {
+    for (auto it = asks_.begin(); it != asks_.end() && count < top_n; ++it, ++count) {
         snap.ask_prices.push_back(it->first);
         snap.ask_shares.push_back(it->second);
     }
@@ -80,9 +80,9 @@ BookSnapshot Order_Book::GetSnapshot(size_t top_n) const {
     return snap;
 }
 
-void Order_Book::Execute(const Order_Executed* order){
-    auto it = orders.find(order->order_reference_number);
-    if(it == orders.end()){
+void OrderBook::Execute(const OrderExecuted* order){
+    auto it = orders_.find(order->order_reference_number);
+    if(it == orders_.end()){
         std::cout << "Order reference not found for execution: " << order->order_reference_number << "\n";
         return;
     }
@@ -91,26 +91,26 @@ void Order_Book::Execute(const Order_Executed* order){
     uint32_t executed_shares = ntohl(order->executed_shares);
 
     if(executed_shares > exec_order.shares){
-        std::cout << "Executed shares exceed order shares for " << stock_name << "\n";
+        std::cout << "Executed shares exceed order shares for " << stock_name_ << "\n";
         return;
     }
 
-    auto& side = (exec_order.indicator == 'B') ? bids : asks;
+    auto& side = (exec_order.indicator == 'B') ? bids_ : asks_;
     side[exec_order.price] -= executed_shares;
     if(side[exec_order.price] == 0){
         side.erase(exec_order.price);
     }
-    record_delta(exec_order.indicator, exec_order.price);
+    RecordDelta(exec_order.indicator, exec_order.price);
 
     exec_order.shares -= executed_shares;
     if(exec_order.shares == 0){
-        orders.erase(it);
+        orders_.erase(it);
     }
 }
 
-void Order_Book::Execute(const Order_Executed_With_Price* order){
-    auto it = orders.find(order->order_reference_number);
-    if(it == orders.end()){
+void OrderBook::Execute(const OrderExecutedWithPrice* order){
+    auto it = orders_.find(order->order_reference_number);
+    if(it == orders_.end()){
         std::cout << "Order reference not found for execution with price: " << order->order_reference_number << "\n";
         return;
     }
@@ -119,26 +119,26 @@ void Order_Book::Execute(const Order_Executed_With_Price* order){
     uint32_t executed_shares = ntohl(order->executed_shares);
 
     if(executed_shares > exec_order.shares){
-        std::cout << "Executed shares exceed order shares for " << stock_name << "\n";
+        std::cout << "Executed shares exceed order shares for " << stock_name_ << "\n";
         return;
     }
 
-    auto& side = (exec_order.indicator == 'B') ? bids : asks;
+    auto& side = (exec_order.indicator == 'B') ? bids_ : asks_;
     side[exec_order.price] -= executed_shares;
     if(side[exec_order.price] == 0){
         side.erase(exec_order.price);
     }
-    record_delta(exec_order.indicator, exec_order.price);
+    RecordDelta(exec_order.indicator, exec_order.price);
 
     exec_order.shares -= executed_shares;
     if(exec_order.shares == 0){
-        orders.erase(it);
+        orders_.erase(it);
     }
 }
 
-void Order_Book::Cancel(const Order_Cancel* order){
-    auto it = orders.find(order->order_reference_number);
-    if(it == orders.end()){
+void OrderBook::Cancel(const OrderCancel* order){
+    auto it = orders_.find(order->order_reference_number);
+    if(it == orders_.end()){
         std::cout << "Order reference not found for cancellation: " << order->order_reference_number << "\n";
         return;
     }
@@ -147,67 +147,67 @@ void Order_Book::Cancel(const Order_Cancel* order){
     uint32_t canceled_shares = ntohl(order->canceled_shares);
 
     if(canceled_shares > cancel_order.shares){
-        std::cout << "Canceled shares exceed order shares for " << stock_name << "\n";
+        std::cout << "Canceled shares exceed order shares for " << stock_name_ << "\n";
         return;
     }
 
-    auto& side = (cancel_order.indicator == 'B') ? bids : asks;
+    auto& side = (cancel_order.indicator == 'B') ? bids_ : asks_;
     side[cancel_order.price] -= canceled_shares;
     if(side[cancel_order.price] == 0){
         side.erase(cancel_order.price);
     }
-    record_delta(cancel_order.indicator, cancel_order.price);
+    RecordDelta(cancel_order.indicator, cancel_order.price);
 
     cancel_order.shares -= canceled_shares;
     if(cancel_order.shares == 0){
-        orders.erase(it);
+        orders_.erase(it);
     }
 }
 
-void Order_Book::Delete(const Order_Delete* order){
-    auto it = orders.find(order->order_reference_number);
-    if(it == orders.end()){
+void OrderBook::Delete(const OrderDelete* order){
+    auto it = orders_.find(order->order_reference_number);
+    if(it == orders_.end()){
         std::cout << "Order reference not found for deletion: " << order->order_reference_number << "\n";
         return;
     }
 
     Order& delete_order = it->second;
 
-    auto& side = (delete_order.indicator == 'B') ? bids : asks;
+    auto& side = (delete_order.indicator == 'B') ? bids_ : asks_;
     side[delete_order.price] -= delete_order.shares;
     if(side[delete_order.price] == 0){
         side.erase(delete_order.price);
     }
-    record_delta(delete_order.indicator, delete_order.price);
+    RecordDelta(delete_order.indicator, delete_order.price);
 
-    orders.erase(it);
+    orders_.erase(it);
 }
 
-void Order_Book::Replace(const Order_Replace* order){
-    auto it = orders.find(order->original_order_reference_number);
-    if(it == orders.end()){
+void OrderBook::Replace(const OrderReplace* order){
+    auto it = orders_.find(order->original_order_reference_number);
+    if(it == orders_.end()){
         std::cout << "Original order reference not found for replacement: " << order->original_order_reference_number << "\n";
         return;
     }
 
     Order& old_order = it->second;
 
-    auto& side = (old_order.indicator == 'B') ? bids : asks;
+    auto& side = (old_order.indicator == 'B') ? bids_ : asks_;
     side[old_order.price] -= old_order.shares;
     if(side[old_order.price] == 0){
         side.erase(old_order.price);
     }
-    record_delta(old_order.indicator, old_order.price);
+    RecordDelta(old_order.indicator, old_order.price);
 
     Order new_order;
     new_order.indicator = old_order.indicator;
     new_order.shares    = ntohl(order->shares);
     new_order.price     = ntohl(order->price);
-    new_order.MPID      = old_order.MPID;
+    new_order.mpid      = old_order.mpid;
 
-    orders.erase(it);
-    orders.insert({order->new_order_reference_number, new_order});
+    orders_.erase(it);
+    orders_.insert({order->new_order_reference_number, new_order});
 
     side[new_order.price] += new_order.shares;
-    record_delta(new_order.indicator, new_order.price);
+    RecordDelta(new_order.indicator, new_order.price);
 }

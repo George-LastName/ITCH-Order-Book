@@ -7,13 +7,13 @@
 
 #include <clickhouse/client.h> // Clickhouse
 
-#include "OrderBook.h"
+#include "order_book.h"
 
-enum class eDatabaseTypes{
+enum class DatabaseType {
     kClickhouse,
 };
 
-enum class eDBWriting { kOverrideLimit, kFollowLimit };
+enum class DbWriting { kOverrideLimit, kFollowLimit };
 
 class Database {
 public:
@@ -23,16 +23,16 @@ public:
     virtual void Disconnect() = 0;
     virtual void CreateDatabase(std::string) = 0;
     virtual void CreateTables(std::string) = 0;
-    virtual void WriteSnapshot(std::unordered_map<uint16_t, Order_Book>& books,
+    virtual void WriteSnapshot(std::unordered_map<uint16_t, OrderBook>& books,
                                size_t book_depth,
                                uint64_t timestamp_ns,
-                               eDBWriting writing_mode = eDBWriting::kFollowLimit) = 0;
-    virtual void WriteDelta(std::unordered_map<uint16_t, Order_Book>& books,
+                               DbWriting writing_mode = DbWriting::kFollowLimit) = 0;
+    virtual void WriteDelta(std::unordered_map<uint16_t, OrderBook>& books,
                             uint64_t timestamp_ns,
-                            eDBWriting writing_mode = eDBWriting::kFollowLimit) = 0;
+                            DbWriting writing_mode = DbWriting::kFollowLimit) = 0;
     static std::string SanitiseTableName(const std::string& path);
     // Factor Design Pattern. Used to abstract child classes away.
-    static std::unique_ptr<Database> Create(eDatabaseTypes type);
+    static std::unique_ptr<Database> Create(DatabaseType type);
 };
 
 class ClickhouseDatabase final : public Database {
@@ -49,16 +49,16 @@ public:
     void Disconnect() override;
     void CreateDatabase(std::string database_name) override;
     void CreateTables(std::string table_name) override;
-    void WriteSnapshot(std::unordered_map<uint16_t, Order_Book>& books,
+    void WriteSnapshot(std::unordered_map<uint16_t, OrderBook>& books,
                        size_t book_depth,
                        uint64_t timestamp_ns,
-                       eDBWriting writing_mode = eDBWriting::kFollowLimit) override;
-    void WriteDelta(std::unordered_map<uint16_t, Order_Book>& books,
+                       DbWriting writing_mode = DbWriting::kFollowLimit) override;
+    void WriteDelta(std::unordered_map<uint16_t, OrderBook>& books,
                     uint64_t timestamp_ns,
-                    eDBWriting writing_mode = eDBWriting::kFollowLimit) override;
+                    DbWriting writing_mode = DbWriting::kFollowLimit) override;
 };
 
-// class kdbDatabase : Database{
+// class KdbDatabase : Database{
 //
 // }
 #endif // DATABASE_H_
