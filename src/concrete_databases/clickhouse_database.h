@@ -19,8 +19,6 @@ private:
 public:
     ClickhouseDatabase();
     ~ClickhouseDatabase() override {};
-    void Connect() override {};
-    void Disconnect() override;
     void CreateDatabase(std::string database_name) override;
     void CreateTables(std::string table_name) override;
     void WriteSnapshot(std::unordered_map<uint16_t, OrderBook>& books,

@@ -18,8 +18,6 @@ class Database {
 public:
     Database(){}
     virtual ~Database() = default;
-    virtual void Connect() = 0;
-    virtual void Disconnect() = 0;
     virtual void CreateDatabase(std::string) = 0;
     virtual void CreateTables(std::string) = 0;
     virtual void WriteSnapshot(std::unordered_map<uint16_t, OrderBook>& books,

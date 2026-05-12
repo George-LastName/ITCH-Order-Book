@@ -16,11 +16,6 @@ ClickhouseDatabase::ClickhouseDatabase()
     return;
 };
 
-void ClickhouseDatabase::Disconnect(){
-    client_.Ping();
-    std::cout << "Clickhouse PING\n";
-}
-
 void ClickhouseDatabase::CreateDatabase(std::string database_name){
     database_name_ = database_name;
     client_.Execute("CREATE DATABASE IF NOT EXISTS " + database_name_);
