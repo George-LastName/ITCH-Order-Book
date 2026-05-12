@@ -14,9 +14,6 @@
 #include "order_book.h"
 #include "database.h"
 
-// Clickhouse
-#include <clickhouse/client.h>
-
 #ifdef PROF
 #include <chrono>
 #endif
