@@ -33,11 +33,6 @@ case $1 in
     "r")
         run
         ;;
-    "all")
-        clean
-        build
-        run
-        ;;
     "reset")
         clean
         clickhouse-client --query "DROP DATABASE Market_Data"
@@ -60,7 +55,6 @@ case $1 in
         echo "  c     Clean the Build Folder"
         echo "  b     Build"
         echo "  p    Build with Profiling"
-        echo "  r     Run"
         echo "  reset Clean Build & Delete Clickhouse Database."
         echo "  all   Clean, Build, Run"
         ;;

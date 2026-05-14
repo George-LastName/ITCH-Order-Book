@@ -1,9 +1,11 @@
 #include "clickhouse_database.h"
+#include "database.h"
+#include "order_book.h"
 
-#include <cstdint>
+
+#include <mutex>
+#include <thread>
 #include <iostream>
-#include <string>
-#include <chrono>
 
 #include <clickhouse/client.h>
 #include <clickhouse/columns/array.h>
@@ -13,6 +15,7 @@
 
 ClickhouseDatabase::ClickhouseDatabase()
         : client_{clickhouse::ClientOptions().SetHost("localhost")}{
+    writer_thread_ = std::thread();
     return;
 };
 
@@ -27,7 +30,7 @@ void ClickhouseDatabase::CreateTables(std::string table_name){
     snapshot_table_ = database_name_ + "." + table_name_ + "_snapshots";
     delta_table_    = database_name_ + "." + table_name_ + "_deltas";
     client_.Execute(R"(
-            CREATE TABLE IF NOT EXISTS )" + snapshot_table_ + R"(
+            CREATE TABLE )" + snapshot_table_ + R"(
             (
                 stock_id        UInt16,
                 stock_name      LowCardinality(String),
@@ -43,7 +46,7 @@ void ClickhouseDatabase::CreateTables(std::string table_name){
     )");
 
     client_.Execute(R"(
-            CREATE TABLE IF NOT EXISTS )" + delta_table_ + R"(
+            CREATE TABLE )" + delta_table_ + R"(
             (
                 timestamp_ns    UInt64,
                 stock_id        UInt16,
@@ -60,75 +63,50 @@ void ClickhouseDatabase::CreateTables(std::string table_name){
     return;
 }
 
-void ClickhouseDatabase::WriteSnapshot(std::unordered_map<uint16_t, OrderBook>& books,
-                                       size_t book_depth,
-                                       uint64_t timestamp_ns,
-                                       DbWriting writing_mode){
+void ClickhouseDatabase::TakeSnapshot(const std::unordered_map<uint16_t, OrderBook>& books,
+                                       const size_t book_depth,
+                                       const uint64_t timestamp_ns,
+                                       const DbWriting writing_mode){
 
-    static auto col_stock_id   = std::make_shared<clickhouse::ColumnUInt16>();
-    static auto col_stock_name = std::make_shared<clickhouse::ColumnLowCardinalityT<clickhouse::ColumnString>>();
-    static auto col_timestamp  = std::make_shared<clickhouse::ColumnUInt64>();
-    static auto col_bid_prices = std::make_shared<clickhouse::ColumnArrayT<clickhouse::ColumnUInt32>>();
-    static auto col_bid_shares = std::make_shared<clickhouse::ColumnArrayT<clickhouse::ColumnUInt32>>();
-    static auto col_ask_prices = std::make_shared<clickhouse::ColumnArrayT<clickhouse::ColumnUInt32>>();
-    static auto col_ask_shares = std::make_shared<clickhouse::ColumnArrayT<clickhouse::ColumnUInt32>>();
-    static int buffered_snapshots = 0;
-
-    static constexpr int kFlushEvery = 10; // flush every 10 snapshots (~10 min of data)
+    static constexpr int kFlushSnapshots = 10; // flush every 10 snapshots (~10 min of data)
 
     for (const auto& [stock_id, book] : books) {
         if (!book.IsInitialised()) continue;
 
         const auto snap = book.GetSnapshot(book_depth);
-        col_stock_id->Append(stock_id);
-        col_stock_name->Append(std::string_view(book.GetName()));
-        col_timestamp->Append(timestamp_ns);
-        col_bid_prices->Append(snap.bid_prices);
-        col_bid_shares->Append(snap.bid_shares);
-        col_ask_prices->Append(snap.ask_prices);
-        col_ask_shares->Append(snap.ask_shares);
+        pending_snapshots_.col_stock_id->Append(stock_id);
+        pending_snapshots_.col_stock_name->Append(std::string_view(book.GetName()));
+        pending_snapshots_.col_timestamp->Append(timestamp_ns);
+        pending_snapshots_.col_bid_prices->Append(snap.bid_prices);
+        pending_snapshots_.col_bid_shares->Append(snap.bid_shares);
+        pending_snapshots_.col_ask_prices->Append(snap.ask_prices);
+        pending_snapshots_.col_ask_shares->Append(snap.ask_shares);
     }
 
-    buffered_snapshots++;
-    if (writing_mode == DbWriting::kFollowLimit && buffered_snapshots < kFlushEvery) return;
-    if (col_stock_id->Size() == 0) return;
-
-    clickhouse::Block block;
-    block.AppendColumn("stock_id",     col_stock_id);
-    block.AppendColumn("stock_name",   col_stock_name);
-    block.AppendColumn("timestamp_ns", col_timestamp);
-    block.AppendColumn("bid_prices",   col_bid_prices);
-    block.AppendColumn("bid_shares",   col_bid_shares);
-    block.AppendColumn("ask_prices",   col_ask_prices);
-    block.AppendColumn("ask_shares",   col_ask_shares);
-
-    client_.Insert(snapshot_table_, block);
-    std::chrono::nanoseconds duration(timestamp_ns);
-    std::chrono::hh_mm_ss real_time{duration};
-    std::cout << real_time <<  ": Flushed " << buffered_snapshots << " snapshots, rows: " << col_stock_id->Size() << "\n";
-
-    col_stock_id   = std::make_shared<clickhouse::ColumnUInt16>();
-    col_stock_name = std::make_shared<clickhouse::ColumnLowCardinalityT<clickhouse::ColumnString>>();
-    col_timestamp  = std::make_shared<clickhouse::ColumnUInt64>();
-    col_bid_prices = std::make_shared<clickhouse::ColumnArrayT<clickhouse::ColumnUInt32>>();
-    col_bid_shares = std::make_shared<clickhouse::ColumnArrayT<clickhouse::ColumnUInt32>>();
-    col_ask_prices = std::make_shared<clickhouse::ColumnArrayT<clickhouse::ColumnUInt32>>();
-    col_ask_shares = std::make_shared<clickhouse::ColumnArrayT<clickhouse::ColumnUInt32>>();
-    buffered_snapshots = 0;
+    if (++pending_snapshots_.buffered_snapshots > kFlushSnapshots) {
+        FlushSnapshots();
+    }
 };
 
-void ClickhouseDatabase::WriteDelta(std::unordered_map<uint16_t, OrderBook>& books,
-                                    uint64_t timestamp_ns,
-                                    DbWriting writing_mode){
-    static auto col_timestamp  = std::make_shared<clickhouse::ColumnUInt64>();
-    static auto col_stock_id   = std::make_shared<clickhouse::ColumnUInt16>();
-    static auto col_stock_name = std::make_shared<clickhouse::ColumnLowCardinalityT<clickhouse::ColumnString>>();
-    static auto col_side       = std::make_shared<clickhouse::ColumnLowCardinalityT<clickhouse::ColumnString>>();
-    static auto col_price      = std::make_shared<clickhouse::ColumnUInt32>();
-    static auto col_shares     = std::make_shared<clickhouse::ColumnUInt32>();
-    static int buffered_rounds = 0;
+void ClickhouseDatabase::FlushSnapshots(){
+    clickhouse::Block block;
+    block.AppendColumn("stock_id",     pending_snapshots_.col_stock_id);
+    block.AppendColumn("stock_name",   pending_snapshots_.col_stock_name);
+    block.AppendColumn("timestamp_ns", pending_snapshots_.col_timestamp);
+    block.AppendColumn("bid_prices",   pending_snapshots_.col_bid_prices);
+    block.AppendColumn("bid_shares",   pending_snapshots_.col_bid_shares);
+    block.AppendColumn("ask_prices",   pending_snapshots_.col_ask_prices);
+    block.AppendColumn("ask_shares",   pending_snapshots_.col_ask_shares);
 
-    static constexpr int kFlushEvery = 100; // flush every 100 delta rounds (~100s of data)
+    EnqueueWrite({snapshot_table_, std::move(block) });
+
+    pending_snapshots_ = PendingSnapshots{};
+};
+
+void ClickhouseDatabase::TakeDelta(std::unordered_map<uint16_t, OrderBook>& books,
+                                    const uint64_t timestamp_ns,
+                                    const DbWriting writing_mode){
+    static constexpr int kFlushDeltas = 100; // flush every 100 delta rounds (~100s of data)
 
     for (auto& [stock_id, book] : books) {
         if (!book.IsInitialised() || !book.HasDeltas()) continue;
@@ -136,45 +114,67 @@ void ClickhouseDatabase::WriteDelta(std::unordered_map<uint16_t, OrderBook>& boo
         const std::string_view name = book.GetName();
 
         for (const auto& [price, shares] : book.GetBidDeltas()) {
-            col_timestamp->Append(timestamp_ns);
-            col_stock_id->Append(stock_id);
-            col_stock_name->Append(name);
-            col_side->Append(std::string_view("B", 1));
-            col_price->Append(price);
-            col_shares->Append(shares);
+            pending_deltas_.col_timestamp->Append(timestamp_ns);
+            pending_deltas_.col_stock_id->Append(stock_id);
+            pending_deltas_.col_stock_name->Append(name);
+            pending_deltas_.col_side->Append(std::string_view("B", 1));
+            pending_deltas_.col_price->Append(price);
+            pending_deltas_.col_shares->Append(shares);
         }
         for (const auto& [price, shares] : book.GetAskDeltas()) {
-            col_timestamp->Append(timestamp_ns);
-            col_stock_id->Append(stock_id);
-            col_stock_name->Append(name);
-            col_side->Append(std::string_view("S", 1));
-            col_price->Append(price);
-            col_shares->Append(shares);
+            pending_deltas_.col_timestamp->Append(timestamp_ns);
+            pending_deltas_.col_stock_id->Append(stock_id);
+            pending_deltas_.col_stock_name->Append(name);
+            pending_deltas_.col_side->Append(std::string_view("S", 1));
+            pending_deltas_.col_price->Append(price);
+            pending_deltas_.col_shares->Append(shares);
         }
 
         book.ClearDeltas();
     }
 
-    buffered_rounds++;
-    if (writing_mode == DbWriting::kFollowLimit && buffered_rounds < kFlushEvery) return;
-    if (col_timestamp->Size() == 0) return;
+    if(++pending_deltas_.buffered_deltas >= kFlushDeltas) {
+        FlushDeltas();
+    }
+};
 
+void ClickhouseDatabase::FlushDeltas(){
     clickhouse::Block block;
-    block.AppendColumn("timestamp_ns", col_timestamp);
-    block.AppendColumn("stock_id",     col_stock_id);
-    block.AppendColumn("stock_name",   col_stock_name);
-    block.AppendColumn("side",         col_side);
-    block.AppendColumn("price",        col_price);
-    block.AppendColumn("shares",       col_shares);
+    block.AppendColumn("timestamp_ns", pending_deltas_.col_timestamp);
+    block.AppendColumn("stock_id",     pending_deltas_.col_stock_id);
+    block.AppendColumn("stock_name",   pending_deltas_.col_stock_name);
+    block.AppendColumn("side",         pending_deltas_.col_side);
+    block.AppendColumn("price",        pending_deltas_.col_price);
+    block.AppendColumn("shares",       pending_deltas_.col_shares);
 
-    client_.Insert(delta_table_, block);
-    //std::cout << "Flushed " << buffered_rounds << " delta rounds, rows: " << col_timestamp->Size() << "\n";
+    EnqueueWrite({ delta_table_, std::move(block) });
 
-    col_timestamp  = std::make_shared<clickhouse::ColumnUInt64>();
-    col_stock_id   = std::make_shared<clickhouse::ColumnUInt16>();
-    col_stock_name = std::make_shared<clickhouse::ColumnLowCardinalityT<clickhouse::ColumnString>>();
-    col_side       = std::make_shared<clickhouse::ColumnLowCardinalityT<clickhouse::ColumnString>>();
-    col_price      = std::make_shared<clickhouse::ColumnUInt32>();
-    col_shares     = std::make_shared<clickhouse::ColumnUInt32>();
-    buffered_rounds = 0;
+    pending_deltas_ = PendingDeltas{};
+};
+
+void ClickhouseDatabase::EnqueueWrite(WaitingWrite write){
+    {
+    std::lock_guard lock(mutex_);
+    writing_queue_.push(std::move(write));
+    }
+    condition_variable_.notify_one();
+}
+
+void ClickhouseDatabase::ThreadWritingLoop(){
+    while(true){
+        std::unique_lock lock(mutex_);
+        condition_variable_.wait(lock, [&]{return !writing_queue_.empty() || done_.load(); });
+        if (writing_queue_.empty() && done_.load()) break;
+
+        std::vector<WaitingWrite> writes;
+        while (!writing_queue_.empty()) {
+            writes.push_back(std::move(writing_queue_.front()));
+            writing_queue_.pop();
+        }
+        lock.unlock();
+
+        for(auto& write : writes){
+            client_.Insert(write.target_table, write.waiting_block);
+        }
+    }
 };

@@ -18,7 +18,7 @@
 #include <chrono>
 #endif
 
-#define HEADER_LENGTH 11
+static constexpr size_t kHeaderLength = 11;
 static constexpr size_t kTopN = 10;
 
 enum class MarketState {
@@ -58,7 +58,7 @@ static std::string SanitiseTableName(const std::string& path) {
 static inline void ParseMessage(uint8_t* ptr){
 
     const auto* header = reinterpret_cast<ItchHeader*>(ptr);
-    ptr += HEADER_LENGTH;
+    ptr += kHeaderLength;
 
     /* TODO: For SIMULATION, check if able to send message, if not wait until able.
      *  while(sim_time > header->timestamp){
@@ -244,12 +244,12 @@ int main(int argc, char* argv[]){
         ParseMessage(filePtr);
 
         if (curr_message_timestamp - last_delta_ns >= kDeltaIntervalNs) {
-            data_connection->WriteDelta(stock_books, curr_message_timestamp);
+            data_connection->TakeDelta(stock_books, curr_message_timestamp);
             last_delta_ns = curr_message_timestamp;
         }
 
         if (curr_message_timestamp - last_snapshot_ns >= kSnapshotIntervalNs) {
-            data_connection->WriteSnapshot(stock_books, kTopN, curr_message_timestamp);
+            data_connection->TakeSnapshot(stock_books, kTopN, curr_message_timestamp);
             last_snapshot_ns = curr_message_timestamp;
         }
 
@@ -257,8 +257,8 @@ int main(int argc, char* argv[]){
     }
 
     // Force final write
-    data_connection->WriteDelta(stock_books, curr_message_timestamp, DbWriting::kOverrideLimit);
-    data_connection->WriteSnapshot(stock_books, kTopN, curr_message_timestamp, DbWriting::kOverrideLimit);
+    data_connection->TakeDelta(stock_books, curr_message_timestamp, DbWriting::kOverrideLimit);
+    data_connection->TakeSnapshot(stock_books, kTopN, curr_message_timestamp, DbWriting::kOverrideLimit);
 
     std::cout << "\n";
 
