@@ -1,5 +1,4 @@
 #include "clickhouse_database.h"
-#include "database.h"
 #include "order_book.h"
 
 
@@ -15,9 +14,17 @@
 
 ClickhouseDatabase::ClickhouseDatabase()
         : client_{clickhouse::ClientOptions().SetHost("localhost")}{
-    writer_thread_ = std::thread();
+    writer_thread_ = std::thread(&ClickhouseDatabase::ThreadWritingLoop, this);
     return;
 };
+
+ClickhouseDatabase::~ClickhouseDatabase(){
+    Flush();
+    done_.store(true);
+    condition_variable_.notify_one();
+    writer_thread_.join();
+    std::cout << "Thread Done!\n";
+}
 
 void ClickhouseDatabase::CreateDatabase(std::string database_name){
     database_name_ = database_name;
@@ -30,7 +37,7 @@ void ClickhouseDatabase::CreateTables(std::string table_name){
     snapshot_table_ = database_name_ + "." + table_name_ + "_snapshots";
     delta_table_    = database_name_ + "." + table_name_ + "_deltas";
     client_.Execute(R"(
-            CREATE TABLE )" + snapshot_table_ + R"(
+            CREATE TABLE IF NOT EXISTS )" + snapshot_table_ + R"(
             (
                 stock_id        UInt16,
                 stock_name      LowCardinality(String),
@@ -46,7 +53,7 @@ void ClickhouseDatabase::CreateTables(std::string table_name){
     )");
 
     client_.Execute(R"(
-            CREATE TABLE )" + delta_table_ + R"(
+            CREATE TABLE IF NOT EXISTS )" + delta_table_ + R"(
             (
                 timestamp_ns    UInt64,
                 stock_id        UInt16,
@@ -65,8 +72,7 @@ void ClickhouseDatabase::CreateTables(std::string table_name){
 
 void ClickhouseDatabase::TakeSnapshot(const std::unordered_map<uint16_t, OrderBook>& books,
                                        const size_t book_depth,
-                                       const uint64_t timestamp_ns,
-                                       const DbWriting writing_mode){
+                                       const uint64_t timestamp_ns){
 
     static constexpr int kFlushSnapshots = 10; // flush every 10 snapshots (~10 min of data)
 
@@ -104,8 +110,7 @@ void ClickhouseDatabase::FlushSnapshots(){
 };
 
 void ClickhouseDatabase::TakeDelta(std::unordered_map<uint16_t, OrderBook>& books,
-                                    const uint64_t timestamp_ns,
-                                    const DbWriting writing_mode){
+                                    const uint64_t timestamp_ns){
     static constexpr int kFlushDeltas = 100; // flush every 100 delta rounds (~100s of data)
 
     for (auto& [stock_id, book] : books) {
@@ -178,3 +183,8 @@ void ClickhouseDatabase::ThreadWritingLoop(){
         }
     }
 };
+
+void ClickhouseDatabase::Flush(){
+    FlushDeltas();
+    FlushSnapshots();
+}

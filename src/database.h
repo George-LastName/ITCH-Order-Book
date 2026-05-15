@@ -12,9 +12,6 @@ enum class DatabaseType {
     kClickhouse,
 };
 
-enum class DbWriting { kOverrideLimit, kFollowLimit };
-
-
 struct DeltaBatch {
     virtual ~DeltaBatch() = default;
 };
@@ -32,11 +29,11 @@ public:
     virtual void CreateTables(std::string) = 0;
     virtual void TakeSnapshot(const std::unordered_map<uint16_t, OrderBook>& books,
                                const size_t book_depth,
-                               const uint64_t timestamp_ns,
-                               const DbWriting writing_mode = DbWriting::kFollowLimit) = 0;
+                               const uint64_t timestamp_ns) = 0;
     virtual void TakeDelta(std::unordered_map<uint16_t, OrderBook>& books,
-                            const uint64_t timestamp_ns,
-                            const DbWriting writing_mode = DbWriting::kFollowLimit) = 0;
+                            const uint64_t timestamp_ns) = 0;
+    virtual void Flush() = 0;
+
     static std::string SanitiseTableName(const std::string& path);
     // Factory Design Pattern. Used to abstract child classes away.
     static std::unique_ptr<Database> Create(DatabaseType type);

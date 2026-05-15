@@ -23,23 +23,23 @@ private:
     std::string delta_table_;
 
     struct PendingSnapshots {
-        std::shared_ptr<clickhouse::ColumnUInt16> col_stock_id;
-        std::shared_ptr<clickhouse::ColumnLowCardinalityT<clickhouse::ColumnString>> col_stock_name;
-        std::shared_ptr<clickhouse::ColumnUInt64> col_timestamp;
-        std::shared_ptr<clickhouse::ColumnArrayT<clickhouse::ColumnUInt32>> col_bid_prices;
-        std::shared_ptr<clickhouse::ColumnArrayT<clickhouse::ColumnUInt32>> col_bid_shares;
-        std::shared_ptr<clickhouse::ColumnArrayT<clickhouse::ColumnUInt32>> col_ask_prices;
-        std::shared_ptr<clickhouse::ColumnArrayT<clickhouse::ColumnUInt32>> col_ask_shares;
+        std::shared_ptr<clickhouse::ColumnUInt16> col_stock_id = std::make_shared<clickhouse::ColumnUInt16>();
+        std::shared_ptr<clickhouse::ColumnLowCardinalityT<clickhouse::ColumnString>> col_stock_name = std::make_shared<clickhouse::ColumnLowCardinalityT<clickhouse::ColumnString>>();
+        std::shared_ptr<clickhouse::ColumnUInt64> col_timestamp = std::make_shared<clickhouse::ColumnUInt64>();
+        std::shared_ptr<clickhouse::ColumnArrayT<clickhouse::ColumnUInt32>> col_bid_prices = std::make_shared<clickhouse::ColumnArrayT<clickhouse::ColumnUInt32>>();
+        std::shared_ptr<clickhouse::ColumnArrayT<clickhouse::ColumnUInt32>> col_bid_shares = std::make_shared<clickhouse::ColumnArrayT<clickhouse::ColumnUInt32>>();
+        std::shared_ptr<clickhouse::ColumnArrayT<clickhouse::ColumnUInt32>> col_ask_prices = std::make_shared<clickhouse::ColumnArrayT<clickhouse::ColumnUInt32>>();
+        std::shared_ptr<clickhouse::ColumnArrayT<clickhouse::ColumnUInt32>> col_ask_shares = std::make_shared<clickhouse::ColumnArrayT<clickhouse::ColumnUInt32>>();
         int buffered_snapshots = 0;
     };
 
     struct PendingDeltas {
-        std::shared_ptr<clickhouse::ColumnUInt64> col_timestamp;
-        std::shared_ptr<clickhouse::ColumnUInt16> col_stock_id;
-        std::shared_ptr<clickhouse::ColumnLowCardinalityT<clickhouse::ColumnString>> col_stock_name;
-        std::shared_ptr<clickhouse::ColumnLowCardinalityT<clickhouse::ColumnString>> col_side;
-        std::shared_ptr<clickhouse::ColumnUInt32> col_price;
-        std::shared_ptr<clickhouse::ColumnUInt32> col_shares;
+        std::shared_ptr<clickhouse::ColumnUInt64> col_timestamp  = std::make_shared<clickhouse::ColumnUInt64>();
+        std::shared_ptr<clickhouse::ColumnUInt16> col_stock_id   = std::make_shared<clickhouse::ColumnUInt16>();
+        std::shared_ptr<clickhouse::ColumnLowCardinalityT<clickhouse::ColumnString>> col_stock_name = std::make_shared<clickhouse::ColumnLowCardinalityT<clickhouse::ColumnString>>();
+        std::shared_ptr<clickhouse::ColumnLowCardinalityT<clickhouse::ColumnString>> col_side       = std::make_shared<clickhouse::ColumnLowCardinalityT<clickhouse::ColumnString>>();
+        std::shared_ptr<clickhouse::ColumnUInt32> col_price  = std::make_shared<clickhouse::ColumnUInt32>();
+        std::shared_ptr<clickhouse::ColumnUInt32> col_shares = std::make_shared<clickhouse::ColumnUInt32>();
         int buffered_deltas = 0;
     };
 
@@ -62,17 +62,15 @@ private:
     void EnqueueWrite(WaitingWrite write);
 public:
     ClickhouseDatabase();
-    ~ClickhouseDatabase() override {};
+    ~ClickhouseDatabase() override;
     void CreateDatabase(std::string database_name) override;
     void CreateTables(std::string table_name) override;
     void TakeSnapshot(const std::unordered_map<uint16_t, OrderBook>& books,
                        const size_t book_depth,
-                       const uint64_t timestamp_ns,
-                       const DbWriting writing_mode = DbWriting::kFollowLimit) override;
+                       const uint64_t timestamp_ns) override;
     void TakeDelta(std::unordered_map<uint16_t, OrderBook>& books,
-                    const uint64_t timestamp_ns,
-                    const DbWriting writing_mode = DbWriting::kFollowLimit) override;
-    void Flush();
+                    const uint64_t timestamp_ns) override;
+    void Flush() override;
 
     void ThreadWritingLoop();
 };

@@ -220,7 +220,9 @@ int main(int argc, char* argv[]){
 
     std::string database_name = "Market_Data_2";
     std::string table_name = SanitiseTableName(filepath);
-
+#ifdef PROF
+{
+#endif
     std::unique_ptr<Database> data_connection = Database::Create(DatabaseType::kClickhouse);
 
     data_connection->CreateDatabase(database_name);
@@ -257,8 +259,12 @@ int main(int argc, char* argv[]){
     }
 
     // Force final write
-    data_connection->TakeDelta(stock_books, curr_message_timestamp, DbWriting::kOverrideLimit);
-    data_connection->TakeSnapshot(stock_books, kTopN, curr_message_timestamp, DbWriting::kOverrideLimit);
+    data_connection->TakeDelta(stock_books, curr_message_timestamp);
+    data_connection->TakeSnapshot(stock_books, kTopN, curr_message_timestamp);
+    data_connection->Flush();
+#ifdef PROF
+}
+#endif
 
     std::cout << "\n";
 
